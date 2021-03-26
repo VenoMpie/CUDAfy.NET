@@ -571,7 +571,7 @@ kernel void VectorAdd(
                 if (arg is Array)
                 {
                     var ptrEx = GetDeviceMemory(arg) as CLDevicePtrExInter;
-                    kernel.SetMemoryArgument(i, ptrEx.Handle);
+                    kernel.SetMemoryArgument(i, ptrEx.DevPtr_base);
                     int[] dims = ptrEx.GetDimensions();
                     for (int d = 0; d < ptrEx.Dimensions; d++, totalArgs++)
                         kernel.SetValueArgument(++i, dims[d]);
@@ -581,12 +581,13 @@ kernel void VectorAdd(
                 {
                     byte[] ba = Encoding.Unicode.GetBytes(new char[] { (char)arg });
                     ushort shrt = BitConverter.ToUInt16(ba, 0);
-                    kernel.SetValueArgument(i, 2, shrt);
+                    kernel.SetValueArgument(i, shrt);
                 }
-                else
-                {
-                    kernel.SetValueArgument(i, MSizeOf(arg.GetType()), arg);
-                }
+                // TODO: VenoMpie -> Check out object
+                //else
+                //{
+                //    kernel.SetValueArgument(i, MSizeOf(arg.GetType()), arg);
+                //}
             }
 
             // Add constants
@@ -594,7 +595,7 @@ kernel void VectorAdd(
             {
                 CLMemoryHandle clm = (CLMemoryHandle)kvp.Value.CudaPointer;
                 Debug.Assert(clm.IsValid);
-                kernel.SetMemoryArgument(i++, clm);
+                kernel.SetValueArgument(i++, clm);
             }
 
             bool isSynch = (streamId <= 0);
@@ -626,7 +627,8 @@ kernel void VectorAdd(
 
         protected void DoCopyToConstantMemory<T>(Array hostArray, long hostOffset, Array devArray, long devOffset, long count, KernelConstantInfo ci) where T : struct
         {
-            _defaultSynchronousQueue.WriteToBufferEx<T>(hostArray, (CLMemoryHandle)ci.CudaPointer, true, hostOffset, devOffset, count, null);
+            ComputeBuffer<T> a = new ComputeBuffer<T>(_context, ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, count, ((CLMemoryHandle)ci.CudaPointer).Value);
+            _defaultSynchronousQueue.WriteToBuffer<T>((T[])hostArray, a, true, hostOffset, devOffset, count, null);
             _defaultSynchronousQueue.Finish();
         }
 
@@ -643,7 +645,8 @@ kernel void VectorAdd(
         {
             ComputeCommandQueue queue = (ComputeCommandQueue)GetStream(streamId);
             IntPtr hostArrOffset = hostArray.AddOffset<T>(hostOffset);
-            queue.WriteEx<T>((CLMemoryHandle)ci.CudaPointer, false, devOffset, count, hostArrOffset, null);
+            ComputeBuffer<T> a = new ComputeBuffer<T>(_context, ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, count, ((CLMemoryHandle)ci.CudaPointer).Value);
+            queue.Write<T>(a, false, devOffset, count, hostArrOffset, null);
             if (streamId <= 0)
                 queue.Finish();
         }
@@ -660,7 +663,7 @@ kernel void VectorAdd(
         protected void DoCopyToDevice<T>(Array hostArray, long hostOffset, Array devArray, long devOffset, long count) where T : struct
         {
             CLDevicePtrEx<T> ptr = GetDeviceMemory(devArray) as CLDevicePtrEx<T>;
-            _defaultSynchronousQueue.WriteToBufferEx(hostArray, ptr.DevPtr, true, hostOffset, devOffset, count, null);
+            _defaultSynchronousQueue.WriteToBuffer((T[])hostArray, ptr.DevPtr, true, hostOffset, devOffset, count, null);
             _defaultSynchronousQueue.Finish();
         }
 
@@ -680,8 +683,10 @@ kernel void VectorAdd(
         protected void DoCopyFromDevice<T>(Array devArray, long devOffset, Array hostArray, long hostOffset, long count) where T : struct
         {
             CLDevicePtrEx<T> ptr = GetDeviceMemory(devArray) as CLDevicePtrEx<T>;
-            _defaultSynchronousQueue.ReadFromBufferEx(ptr.DevPtr, ref hostArray, true, devOffset, hostOffset, count < 0 ? ptr.TotalSize : count, null);
+            T[] retArray = (T[])Array.CreateInstance(typeof(T), hostArray.Length);
+            _defaultSynchronousQueue.ReadFromBuffer(ptr.DevPtr, ref retArray, true, devOffset, hostOffset, count < 0 ? ptr.TotalSize : count, null);
             _defaultSynchronousQueue.Finish();
+            retArray.CopyTo(hostArray, retArray.Length);
         }
 
         #endregion DoCopyFromDevice
@@ -712,7 +717,8 @@ kernel void VectorAdd(
             ComputeCommandQueue queue = (ComputeCommandQueue)GetStream(streamId);
             IntPtr hostArrPlusOffset = hostArray.AddOffset<T>(hostOffset);
             CLDevicePtrEx<T> ptr = GetDeviceMemory(devArray) as CLDevicePtrEx<T>;
-            queue.WriteEx<T>(ptr.DevPtr.Handle, false, devOffset, count, hostArrPlusOffset, null);
+            ComputeBuffer<T> a = new ComputeBuffer<T>(_context, ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, count, ptr.DevPtr.Handle.Value);
+            queue.Write<T>(a, false, devOffset, count, hostArrPlusOffset, null);
             if (streamId <= 0)
                 queue.Finish();
         }
@@ -721,7 +727,7 @@ kernel void VectorAdd(
         {
             ComputeCommandQueue queue = (ComputeCommandQueue)GetStream(streamId);
             CLDevicePtrEx<T> ptr = GetDeviceMemory(devArray) as CLDevicePtrEx<T>;
-            queue.WriteToBufferEx(hostArray, ptr.DevPtr, false, hostOffset, devOffset, count, null);
+            queue.WriteToBuffer((T[])hostArray, ptr.DevPtr, false, hostOffset, devOffset, count, null);
             if (streamId <= 0)
                 queue.Finish();
         }
@@ -771,9 +777,11 @@ kernel void VectorAdd(
         {
             ComputeCommandQueue queue = (ComputeCommandQueue)GetStream(streamId);
             CLDevicePtrEx<T> ptr = GetDeviceMemory(devArray) as CLDevicePtrEx<T>;
-            queue.ReadFromBufferEx(ptr.DevPtr, ref hostArray, false, devOffset, hostOffset, count, null);
+            T[] retArray = (T[])Array.CreateInstance(typeof(T), hostArray.Length);
+            queue.ReadFromBuffer(ptr.DevPtr, ref retArray, false, devOffset, hostOffset, count, null);
             if (streamId <= 0)
                 queue.Finish();
+            retArray.CopyTo(hostArray, 0);
         }
 
         protected void DoCopyFromDeviceAsync<T>(Array devArray, long devOffset, IntPtr hostArray, long hostOffset, long count, int streamId) where T : struct
@@ -1112,7 +1120,8 @@ kernel void VectorAdd(
                     for (long k = offset; k < maxScanIx; k += len0hostBuffT)
                     {
                         long patchSize = Math.Min(len0hostBuffT, maxScanIx - k);
-                        _defaultSynchronousQueue.WriteEx<T>(ptr.DevPtr.Handle, false, k, patchSize, _ptrHostBuff, null);
+                        ComputeBuffer<T> a = new ComputeBuffer<T>(_context, ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, count, ptr.DevPtr.Handle.Value);
+                        _defaultSynchronousQueue.Write<T>(a, false, k, patchSize, _ptrHostBuff, null);
                     }
                 }
                 finally
