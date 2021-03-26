@@ -276,6 +276,9 @@ namespace Cudafy.Translator
                 foreach (var kci in CUDALanguage.GetConstants())
                 {
                     var elemType = kci.Information.FieldType.GetElementType();
+                    if (elemType is null)
+                        elemType = kci.Information.FieldType;
+
                     string keyword = elemType.Name;
                     var primitiveType = CUDAAstBuilder.ConvertToPrimitiveType(keyword) as PrimitiveType;
                     string name = primitiveType.Keyword;

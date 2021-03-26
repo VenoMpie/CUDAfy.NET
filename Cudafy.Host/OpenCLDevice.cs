@@ -509,7 +509,7 @@ kernel void VectorAdd(
                 program.Build(null, null, null, IntPtr.Zero);
             }
             catch (Exception ex)
-            {                
+            {
                 module.CompilerOutput = program.GetBuildLog(_computeDevice);
                 throw new CudafyCompileException(ex, CudafyCompileException.csCOMPILATION_ERROR_X, module.CompilerOutput); ;
             }
@@ -533,7 +533,11 @@ kernel void VectorAdd(
             {
                 if (!kvp.Value.IsDummy)
                 {
-                    int elemSize = MSizeOf(kvp.Value.Information.FieldType.GetElementType());
+                    var elemType = kvp.Value.Information.FieldType.GetElementType();
+                    if (elemType is null)
+                        elemType = kvp.Value.Information.FieldType;
+
+                    int elemSize = MSizeOf(elemType);
                     int totalLength = kvp.Value.GetTotalLength();
                     ComputeBuffer<byte> a = new ComputeBuffer<byte>(_context, ComputeMemoryFlags.ReadOnly, totalLength * elemSize);
                     module.Constants[kvp.Key].Handle = a;
